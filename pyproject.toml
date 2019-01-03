@@ -1,0 +1,41 @@
+[tool.poetry]
+name = "binance-monitor"
+version = "0.1.0"
+description = "CLI tool to monitor and record account history, etc. from Binance API"
+authors = ["Anson VanDoren <anson.vandoren@gmail.com>"]
+license = "MIT"
+readme = "README.rst"
+repository = "https://github.com/anson-vandoren/binance-monitor.git"
+keywords = [
+    "Binance",
+    "Cryptocurrency",
+    "Trading",
+    "Technical Analysis"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: FInancial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: English",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Office/Business :: Financial :: Accounting",
+    "Topic :: Utilities"
+]
+
+[tool.poetry.dependencies]
+python = ">=3.5"
+logbook = "^1.4"
+python-binance = "^0.7.0"
+
+[tool.poetry.dev-dependencies]
+pylint = "^2.2"
+pytest = "^3.0"
+
+[tool.poetry.scripts]
+binance-monitor = "binance_monitor.cli:main"
+
+[build-system]
+requires = ["poetry>=0.12"]
+build-backend = "poetry.masonry.api"
