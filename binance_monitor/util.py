@@ -20,18 +20,22 @@
 
 """Utilities that are not specific to Binance API"""
 import os
+from typing import TypeVar
+
+T = TypeVar("T", str, os.PathLike)
 
 
-def ensure_dir(file_path) -> None:
+def ensure_dir(file_path: T) -> T:
     """Convenience function to make a folder if the path doesn't already exist
 
     :param file_path: fully qualified file path
-    :return: None
+    :return: file_path
     """
 
     directory = os.path.dirname(file_path)
     if not os.path.exists(directory):
         os.makedirs(directory)
+    return file_path
 
 
 def is_yes_response(prompt: str, default_yes=True):

@@ -35,7 +35,12 @@ PREFERENCES = os.path.join(USER_FOLDER, "preferences.toml")
 log = Logger(__name__.split(".", 1)[-1])
 
 
-def get_preferences() -> dict:
+def _load_prefs() -> dict:
+    """Load user preferences from TOML and return as a dict
+
+    :return: dict containing user preferences
+    """
+
     try:
         return toml.load(PREFERENCES)
     except (IOError, toml.TomlDecodeError):
@@ -43,19 +48,26 @@ def get_preferences() -> dict:
         return {"title": "binance-monitor preferences"}
 
 
-def save_preferences(prefs: dict) -> None:
+def _save_prefs(prefs: dict) -> None:
+    """Save a dictionary with user preferences to TOML
+
+    Current preferences file will be overwritten with no checking
+
+    :param prefs: dictionary containing new user preferences
+    :return: None
+    """
     with open(PREFERENCES, "w") as toml_file:
         toml.dump(prefs, toml_file)
 
 
 def get_blacklist():
-    return get_preferences()["blacklist"] or None
+    return _load_prefs().get("blacklist", None)
 
 
 def save_blacklist(new_blacklist: List):
-    prefs = get_preferences()
+    prefs = _load_prefs()
     prefs.update({"blacklist": new_blacklist})
-    save_preferences(prefs)
+    _save_prefs(prefs)
 
 
 def try_update_blacklist(found_symbols: List):

@@ -54,27 +54,34 @@ def main():
 
     acct_monitor = monitor.AccountMonitor()
 
-    saved_blacklist = settings.get_preferences().get("blacklist", None)
     if args.blacklist:
         blacklist = sorted(args.blacklist)
     else:
         blacklist = None
 
+    blacklist = blacklist_from_cli(acct_monitor, blacklist, log)
+
+    if args.acct_info:
+        print("Requested account info")
+
+        acct_monitor.get_all_trades(blacklist=blacklist)
+
+
+def blacklist_from_cli(acct_monitor, blacklist, log):
+    saved_blacklist = settings.get_blacklist()
+
+    # Wants to blacklist all?
     if blacklist is not None:
         if "ALL" in blacklist or "all" in blacklist:
-            print("Are you sure you want to blacklist all symbols?")
-            blacklist_all = input("[Y]/n").upper()
-            if blacklist_all == "\n" or blacklist_all[0] == "Y":
+            if is_yes_response("Are you sure you want to blacklist all symbols?"):
                 blacklist = (
                     acct_monitor.exchange_info.active_symbols
                     + acct_monitor.exchange_info.inactive_symbols
                 )
 
+    # Wants to add to blacklist?
     if blacklist is not None and saved_blacklist != blacklist:
-        print("Add to saved blacklist? ")
-        save_prefs = input("[Y]/n ")
-        if save_prefs == "\n" or save_prefs.upper()[0] == "Y":
-            print(saved_blacklist, blacklist)
+        if is_yes_response("Add to saved blacklist? "):
             if saved_blacklist is None:
                 new_blacklist = blacklist
             else:
@@ -82,18 +89,14 @@ def main():
             new_blacklist = sorted(new_blacklist)
             log.info(f"Old blacklist: {saved_blacklist}")
             log.info(f"New blacklist: {new_blacklist}")
-            new_prefs = settings.get_preferences()
-            new_prefs.update({"blacklist": new_blacklist})
-            settings.save_preferences(new_prefs)
+            settings.save_blacklist(new_blacklist)
+
+    # No blacklist, want to use saved blacklist?
     elif blacklist is None and saved_blacklist:
-        use_saved = is_yes_response('Use saved blacklist?')
+        use_saved = is_yes_response("Use saved blacklist?")
         if use_saved:
             blacklist = saved_blacklist
-
-    if args.acct_info:
-        print("Requested account info")
-
-        acct_monitor.force_get_all_active(blacklist=blacklist)
+    return blacklist
 
 
 if __name__ == "__main__":

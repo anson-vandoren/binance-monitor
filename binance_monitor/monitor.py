@@ -18,17 +18,18 @@
 # OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+"""Set up single-use or continuous monitors to the BinanceAPI"""
 import json
 import os
 import time
-from typing import Optional, Tuple
-from collections import Counter
+from typing import List, Optional, Tuple, Union
 
 from binance.client import Client
 from logbook import Logger
 from tqdm import tqdm
 
 from binance_monitor import exchange, settings, store, util
+from binance_monitor.util import is_yes_response
 
 
 class AccountMonitor(object):
@@ -39,6 +40,7 @@ class AccountMonitor(object):
         will be made to load credentials from cache, or prompt user for them.
 
         :param credentials: Binance API key and secret (optional)
+        :param name: Nickname for this account. Optional, default value is "default"
         """
 
         self.log = Logger(__name__.split(".", 1)[-1])
@@ -58,7 +60,9 @@ class AccountMonitor(object):
         """Try to load API credentials from disk.
 
         :return: Tuple (key, secret) if loaded successfully, else None
+        :raises: IOError if credentials cannot be loaded from disk
         """
+
         cache_file = settings.API_KEY_FILENAME
 
         if not os.path.exists(cache_file):
@@ -78,85 +82,105 @@ class AccountMonitor(object):
         return api_key, api_secret
 
     def _request_credentials(self) -> Tuple[str, str]:
+        """Prompt user to enter API key and secret. Prompt user to save credentials
+        to disk for future use (unencrypted)
+
+        :return: A tuple with (key, secret)
+        """
 
         api_key = input("Enter Binance API key: ")
         api_secret = input("Enter Binance API secret: ")
 
-        print("\nSave credentials to disk (unencrypted)?")
-        save_creds = input("[Y/n] ").upper()
-        save_creds = len(save_creds) == 0 or save_creds[0] == "Y"
+        save_credentials = is_yes_response("\nSave credentials to disk (unencrypted)?")
 
-        if save_creds:
+        if save_credentials:
             cache_file = settings.API_KEY_FILENAME
             cred_json = {"binance_key": api_key, "binance_secret": api_secret}
-            util.ensure_dir(cache_file)
-            with open(cache_file, "w") as cred_file:
+
+            with open(util.ensure_dir(cache_file), "w") as cred_file:
                 json.dump(cred_json, cred_file)
                 self.log.info(f"Stored credentials to {cache_file}")
 
         return api_key, api_secret
 
-    def update_trades(self, symbols):
+    def get_trade_history_for(self, symbols: Union[list, str]) -> None:
+        """Get full trade history from the API for each symbol in `symbols`
+
+        :param symbols: A single symbol pair, or a list of such pairs, which are listed
+            on Binance
+        :return: None
+        """
+
+        # Get the minimum time to wait between requests to avoid being throttled/banned
         wait_time = 1.0 / self.exchange_info.max_request_freq(req_weight=5)
-        self.log.info(f"Updating trades with wait_time={wait_time}")
-        request_limit = 1000
-
-        if isinstance(symbols, str):
-            symbols = [symbols]
-
+        limit = 1000
         trades = []
         last_called = 0
+
+        if not isinstance(symbols, list):
+            symbols = [symbols]
+
         for symbol in tqdm(symbols):
-            tqdm.write(symbol)
-            now = time.perf_counter()
-            if now - last_called < wait_time:
-                sleep_time = wait_time - (now - last_called)
-                time.sleep(sleep_time)
-            last_called = time.perf_counter()
-            result = self.client.get_my_trades(symbol=symbol, limit=request_limit)
+            tqdm.write(symbol, end="")  # Print to console above the progress bar
 
-            if not result:
-                # No trades for this symbol, try the next one
-                continue
+            result = None
+            params = {"symbol": symbol, "limit": limit}
 
-            trades.extend(result)
-
-            while len(result) == request_limit:
+            while result is None or len(result) == limit:
+                # Wait a while if needed to avoid hitting API rate limits
                 now = time.perf_counter()
-                if now - last_called < wait_time:
-                    sleep_time = wait_time - (now - last_called)
-                    self.log.info(f"Waiting for repeat request {sleep_time} sec")
-                    time.sleep(sleep_time)
-                # Need to pull more. Get the time of the first trade, subtract one,
-                # and set that as the last trade time to get to get
-                next_end_time = result[0]["time"] - 1
+                delta = now - last_called
+                if delta < wait_time:
+                    time.sleep(wait_time - delta)
+
+                next_end_time = result[0]["time"] - 1 if result else None
+                if next_end_time:
+                    params.update({"endTime": next_end_time})
+
                 last_called = time.perf_counter()
-                result = self.client.get_my_trades(
-                    symbol=symbol, limit=request_limit, endTime=next_end_time
-                )
+                result = self.client.get_my_trades(**params)
+
+                if not result:
+                    break
+
                 trades.extend(result)
+                tqdm.write(f" : {len(result)}", end="")
+
+            tqdm.write("")
 
         if not trades:
-            self.log.notice('No symbols to get trades for')
+            self.log.notice("No trades received for given symbols")
             return
 
         # Check if blacklist might need to be updated
-        symbols_found = list(set([trade['symbol'] for trade in trades]))
+        symbols_found = list(set([trade["symbol"] for trade in trades]))
         if symbols_found:
             settings.try_update_blacklist(symbols_found)
 
         # Write results to the store
         self.trades.update(trades)
         self.trades.save()
-        trade_counter = dict(Counter([trade['symbol'] for trade in trades]))
-        self.log.notice(f"{len(trades)} retrieved and stored on disk: {trade_counter}")
+        self.log.notice(f"{len(trades)} trades retrieved and stored on disk")
 
-    def force_get_all_active(self, whitelist=None, blacklist=None):
+    def get_all_trades(self, whitelist: List[str] = None, blacklist: List[str] = None):
+        """Pull trade history for all symbols on Binance.
+
+        If `whitelist` is given, only get trade history for the list of symbols it contains
+        If `blacklist` is given (and no whitelist), get all symbol pairs active on
+        Binance *except* the symbols it contains
+
+        :param whitelist:
+        :param blacklist:
+        :return: None
+        """
+
         all_active = self.exchange_info.active_symbols
+
         if blacklist is not None and whitelist is None:
             self.log.info(f"Skipping {blacklist} while getting all trades")
             all_active = [pair for pair in all_active if pair not in blacklist]
         elif whitelist is not None:
             all_active = [pair for pair in all_active if pair in whitelist]
             self.log.info(f"Only getting trades for whitelisted pairs: {all_active}")
-        self.update_trades(all_active)
+
+        self.get_trade_history_for(all_active)
