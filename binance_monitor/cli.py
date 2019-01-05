@@ -20,27 +20,21 @@
 
 """CLI argument parsing for Binance Monitor"""
 import argparse
-import json
-import os
 import sys
-from typing import Dict, Optional
 
-from binance.client import Client
-from logbook import Logger, StreamHandler, TimedRotatingFileHandler
+import logbook
 
-from binance_monitor import util
-
-USER_FOLDER = os.path.join(os.path.expanduser("~"), ".binance-monitor")
-LOG_FILENAME = os.path.join(USER_FOLDER, "logs", "app.log")
-API_KEY_FILENAME = os.path.join(USER_FOLDER, "config", "api_cred.json")
+from binance_monitor import monitor, settings, util
+from binance_monitor.util import is_yes_response
+from binance_monitor.settings import LOG_FILENAME
 
 
 def main():
     # Set up logging for the whole app
     util.ensure_dir(LOG_FILENAME)
-    TimedRotatingFileHandler(LOG_FILENAME, bubble=True).push_application()
-    StreamHandler(sys.stdout, level="NOTICE", bubble=True).push_application()
-    log = Logger(__name__.split(".", 1)[-1])
+    logbook.TimedRotatingFileHandler(LOG_FILENAME, bubble=True).push_application()
+    logbook.StreamHandler(sys.stdout, level="NOTICE", bubble=True).push_application()
+    log = logbook.Logger(__name__.split(".", 1)[-1])
 
     log.info("*" * 80)
     log.info("***" + "Starting CLI Parser for binance-monitor".center(74) + "***")
@@ -49,62 +43,57 @@ def main():
     parser = argparse.ArgumentParser(
         description="CLI for monitoring Binance account information"
     )
-    parser.add_argument("--acct_info", help="Display account info", action='store_true')
-
-    if not os.path.exists(API_KEY_FILENAME):
-        log.info(f"API credentials not found at {API_KEY_FILENAME}")
-        api_credentials = _save_credentials()
-        if not api_credentials:
-            print("Exiting...")
-            return
-    else:
-        with open(API_KEY_FILENAME, "r") as cred_file:
-            api_credentials = json.load(cred_file)
-            log.info("API credentials loaded from disk")
-
-    api_key = api_credentials.get("binance_key", None)
-    api_secret = api_credentials.get("binance_secret", None)
-    if api_key is None or api_secret is None:
-        log.info("API credentials did not load properly from JSON file")
-        print(
-            f"{api_credentials} does not contain API key and secret. Please check the "
-            "file and try again, or delete the file and re-enter your credentials "
-            "from the CLI"
-        )
-        return
+    parser.add_argument("--acct_info", help="Display account info", action="store_true")
+    parser.add_argument(
+        "--blacklist",
+        help="Blacklist (don't get trades for) listed symbol pairs",
+        nargs="*",
+    )
 
     args = parser.parse_args()
-    if args.acct_info:
-        print('Requested account info')
-        client = Client(api_key, api_secret)
-        info = client.get_account()
-        print(info)
 
+    acct_monitor = monitor.AccountMonitor()
 
-def _save_credentials() -> Optional[Dict]:
-    # TODO: Consider encrypting API key/secret and requiring a password
-    print("Previously saved credentials not found for Binance API. Enter them now?")
-    print(f"(Credentials will be saved (unencrypted) to {API_KEY_FILENAME})")
-    save_creds = input("[Y/n] ").upper()
-    save_creds = len(save_creds) == 0 or save_creds[0] == "Y"
-    if not save_creds:
-        print("Cannot monitor account status without credentials!")
-        print(
-            "If you prefer to enter them manually, save them as JSON "
-            "{binance_key: key, binance_secret: secret} at "
-            f"{API_KEY_FILENAME} and then run the CLI again"
-        )
-        return None
+    saved_blacklist = settings.get_preferences().get("blacklist", None)
+    if args.blacklist:
+        blacklist = sorted(args.blacklist)
     else:
-        api_key = input("Enter Binance API key: ")
-        api_secret = input("Enter Binance API secret: ")
+        blacklist = None
 
-        credentials = {"binance_key": api_key, "binance_secret": api_secret}
-        util.ensure_dir(API_KEY_FILENAME)
-        with open(API_KEY_FILENAME, "w") as cred_file:
-            json.dump(credentials, cred_file)
+    if blacklist is not None:
+        if "ALL" in blacklist or "all" in blacklist:
+            print("Are you sure you want to blacklist all symbols?")
+            blacklist_all = input("[Y]/n").upper()
+            if blacklist_all == "\n" or blacklist_all[0] == "Y":
+                blacklist = (
+                    acct_monitor.exchange_info.active_symbols
+                    + acct_monitor.exchange_info.inactive_symbols
+                )
 
-        return credentials
+    if blacklist is not None and saved_blacklist != blacklist:
+        print("Add to saved blacklist? ")
+        save_prefs = input("[Y]/n ")
+        if save_prefs == "\n" or save_prefs.upper()[0] == "Y":
+            print(saved_blacklist, blacklist)
+            if saved_blacklist is None:
+                new_blacklist = blacklist
+            else:
+                new_blacklist = list(set(saved_blacklist + blacklist))
+            new_blacklist = sorted(new_blacklist)
+            log.info(f"Old blacklist: {saved_blacklist}")
+            log.info(f"New blacklist: {new_blacklist}")
+            new_prefs = settings.get_preferences()
+            new_prefs.update({"blacklist": new_blacklist})
+            settings.save_preferences(new_prefs)
+    elif blacklist is None and saved_blacklist:
+        use_saved = is_yes_response('Use saved blacklist?')
+        if use_saved:
+            blacklist = saved_blacklist
+
+    if args.acct_info:
+        print("Requested account info")
+
+        acct_monitor.force_get_all_active(blacklist=blacklist)
 
 
 if __name__ == "__main__":

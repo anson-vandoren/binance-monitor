@@ -32,3 +32,17 @@ def ensure_dir(file_path) -> None:
     directory = os.path.dirname(file_path)
     if not os.path.exists(directory):
         os.makedirs(directory)
+
+
+def is_yes_response(prompt: str, default_yes=True):
+    print(prompt)
+    query = "[Y]/n " if default_yes else "y/[N] "
+    response = input(query).upper()
+
+    if not response:
+        return default_yes
+
+    if default_yes:
+        return response[0] == "Y"
+
+    return response[0] == "N"
