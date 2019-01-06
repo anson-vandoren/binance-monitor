@@ -4,21 +4,23 @@
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy of this
 # software and associated documentation files (the "Software"), to deal in the Software
-# without restriction, including without limitation the rights to use, copy, modify, merge,
-# publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons
-# to whom the Software is furnished to do so, subject to the following conditions:
+# without restriction, including without limitation the rights to use, copy, modify,
+# merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+# permit persons to whom the Software is furnished to do so, subject to the following
+# conditions:
 #
-# The above copyright notice and this permission notice (including the next paragraph) shall
-# be included in all copies or substantial portions of the Software.
+# The above copyright notice and this permission notice (including the next paragraph)
+# shall be included in all copies or substantial portions of the Software.
 #
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
-# INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
-# PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
-# FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-# OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-# DEALINGS IN THE SOFTWARE.
+# INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+# PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+# HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+# CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE
+# OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 """Set up single-use or continuous monitors to the BinanceAPI"""
+import atexit
 import time
 from typing import Dict, List, Optional
 
@@ -52,21 +54,29 @@ class AccountMonitor(object):
         self.exchange_info = exchange.Exchange(self.client)
         self.name = name
         self.trade_store = store.TradeStore(name)
-        self.bsm = None
+        self.bsm: Optional[BinanceSocketManager] = None
         self.conn_key = None
+
+        atexit.register(self._stop_user_monitor)
 
     def start_user_monitor(self):
         self.bsm = BinanceSocketManager(self.client)
         self.conn_key = self.bsm.start_user_socket(self.process_user_update)
         self.bsm.start()
+        self.log.notice("Starting account monitor listener. Press Ctrl+C to exit.")
+
+    def _stop_user_monitor(self):
+        if self.conn_key is not None:
+            self.bsm.stop_socket(self.conn_key)
+            self.conn_key = None
+            self.log.notice("Account monitor has been shutdown")
 
     def process_user_update(self, msg: dict):
-
         update = EventUpdate.create(msg)
         if isinstance(update, OrderUpdate) and update.is_trade_event:
             self.trade_store.add_trade(update.trade)
             print(update.trade)
-            settings.remove_from_blacklist(update.symbol)
+            settings.Blacklist.remove(update.symbol)
 
     def get_trade_history_for(self, symbols: List) -> None:
         """Get full trade history from the API for each symbol in `symbols`
@@ -121,24 +131,20 @@ class AccountMonitor(object):
         # Write results to the store
         tax_trades = [TaxTrade.from_historic_trades(result) for result in trades]
         self.trade_store.update(tax_trades)
-        self.trade_store.save()
         self.log.notice(f"{len(trades)} trades retrieved and stored on disk")
 
-    def get_all_trades(self, whitelist: List[str] = None, blacklist: List[str] = None):
-        """Pull trade history for all symbols on Binance.
+    def get_all_trades(self, force_all=False):
+        """Pull trade history for all symbols on Binance that are not blacklisted.
 
-        If `whitelist` is given, only get trade history for the list of symbols it contains
-        If `blacklist` is given (and no whitelist), get all symbol pairs active on
-        Binance *except* the symbols it contains
+        If *force_all* is True, pull history regardless of blacklist
         """
-        all_active = self.exchange_info.active_symbols
 
-        if blacklist is not None and whitelist is None:
+        blacklist = settings.Blacklist.get() if not force_all else None
+        all_active = settings.read_symbols("active")
+
+        if blacklist is not None:
             self.log.info(f"Skipping {blacklist} while getting all trades")
             all_active = [pair for pair in all_active if pair not in blacklist]
-        elif whitelist is not None:
-            all_active = [pair for pair in all_active if pair in whitelist]
-            self.log.info(f"Only getting trades for whitelisted pairs: {all_active}")
 
         self.get_trade_history_for(all_active)
 

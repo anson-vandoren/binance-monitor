@@ -17,7 +17,7 @@
 # FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
 # OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
-
+import atexit
 import os
 from typing import List, Optional
 
@@ -39,21 +39,23 @@ class TradeStore:
         self.file_path = os.path.join(ACCOUNT_STORE_FOLDER, self.nickname) + ".h5"
         util.ensure_dir(self.file_path)
 
-        self._trades: Optional[pd.DataFrame]
+        self.trades: Optional[pd.DataFrame]
         try:
-            self._trades: pd.DataFrame = pd.read_hdf(self.file_path, key="taxtrades")
+            self.trades: pd.DataFrame = pd.read_hdf(self.file_path, key="taxtrades")
         except (KeyError, IOError) as exc:
-            self._trades = None
+            self.trades = None
             self.log.warn(f"Could not read {self.file_path} because {exc}")
 
         self.col_names = TaxTrade.COL_NAMES
 
-    @property
-    def trades(self) -> pd.DataFrame:
-        self.clean()
-        return self._trades
+        atexit.register(self._save_on_exit)
 
-    def save(self) -> None:
+    def _save_on_exit(self):
+        self.log.notice("Program terminated, saving data to disk")
+        self._clean()
+        self._save()
+
+    def _save(self) -> None:
         """Write out trade tax events to HDF file.
 
         This will overwrite any trade tax data already in the file, but will leave
@@ -64,14 +66,14 @@ class TradeStore:
             with pd.HDFStore(self.file_path, mode="a") as store:
                 store.put("taxtrades", self.trades, format="table", append=False)
 
-    def clean(self) -> None:
+    def _clean(self) -> None:
         """Remove duplicates from in-memory DataFrame, sort by *dtime*, and
         reset the index
         """
 
-        if self._trades is not None and not self._trades.empty:
-            self._trades = (
-                self._trades.drop_duplicates()
+        if self.trades is not None and not self.trades.empty:
+            self.trades = (
+                self.trades.drop_duplicates()
                 .sort_values("dtime")
                 .reset_index(drop=True)
             )
@@ -96,11 +98,11 @@ class TradeStore:
             trade_df[col] = pd.to_numeric(trade_df[col])
 
         if self.trades is not None:
-            self._trades = self.trades.append(
+            self.trades = self.trades.append(
                 trade_df, ignore_index=True, verify_integrity=True, sort=True
             )
         else:
-            self._trades = (
+            self.trades = (
                 trade_df.drop_duplicates().sort_values("dtime").reset_index(drop=True)
             )
 
@@ -112,11 +114,11 @@ class TradeStore:
         self.trades.to_csv(
             csv_file, float_format="%.9f", index=False, columns=TaxTrade.COL_NAMES
         )
+        self.log.notice(f"Wrote out trades to {csv_file}")
 
     def add_trade(self, new_trade: TaxTrade):
         new_df = new_trade.to_dataframe()
-        self._trades = self.trades.append(
+        self.trades = self.trades.append(
             new_df, ignore_index=True, verify_integrity=True, sort=True
         )
         self.log.info(f"Added new tax trade to the store: {new_trade.as_dict}")
-        self.save()

@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "CLI tool to monitor and record account history, etc. from Binance API"
 authors = ["Anson VanDoren <anson.vandoren@gmail.com>"]
 license = "MIT"
-readme = "README.rst"
+readme = "README.md"
 repository = "https://github.com/anson-vandoren/binance-monitor.git"
 keywords = [
     "Binance",
@@ -27,11 +27,11 @@ classifiers = [
 [tool.poetry.dependencies]
 python = ">=3.5"
 logbook = "^1.4"
-python-binance = "^0.7.0"
 pandas = "^0.23.4"
 tables = "^3.4"
 tqdm = "^4.28"
 toml = "^0.10.0"
+python-binance = "^0.7.0"
 
 [tool.poetry.dev-dependencies]
 pylint = "^2.2"

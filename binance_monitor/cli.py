@@ -21,12 +21,14 @@
 """CLI argument parsing for Binance Monitor"""
 import argparse
 import sys
+import time
 
 import logbook
+from twisted.internet import reactor
 
 from binance_monitor import monitor, settings, util
-from binance_monitor.util import is_yes_response
 from binance_monitor.settings import LOG_FILENAME
+from binance_monitor.util import is_yes_response
 
 
 def main():
@@ -46,29 +48,48 @@ def main():
     parser.add_argument(
         "--update", help="Update trades from server", action="store_true"
     )
+    parser.add_argument(
+        "--force",
+        help="Update trades for all symbols, regardless of blacklist",
+        action="store_true",
+    )
     parser.add_argument("--listen", help="Listen for new trades", action="store_true")
     parser.add_argument("--blacklist", help="Add symbol(s) to blacklist", nargs="*")
     parser.add_argument(
         "--whitelist", help="Remove symbol(s) from blacklist", nargs="*"
     )
+    parser.add_argument(
+        "--csv", help="Write out CSV file of trades (from cache)", action="store_true"
+    )
 
     args = parser.parse_args()
 
-    acct_monitor = None
+    acct_monitor = monitor.AccountMonitor()
 
-    blacklist = blacklist_from_cli(args.blacklist or None)
-    blacklist = whitelist_from_cli(args.whitelist or None)
+    blacklist_from_cli(args.blacklist or None)
+    whitelist_from_cli(args.whitelist or None)
+
+    force_all = True if args.force else False
 
     if args.update:
-        if acct_monitor is None:
-            acct_monitor = monitor.AccountMonitor()
-        acct_monitor.get_all_trades(blacklist=blacklist)
+        acct_monitor.get_all_trades(force_all=force_all)
         acct_monitor.trade_store.save()
 
     if args.listen:
-        if acct_monitor is None:
-            acct_monitor = monitor.AccountMonitor()
         acct_monitor.start_user_monitor()
+
+        while True:
+            try:
+                time.sleep(60 * 60 * 24)
+            except KeyboardInterrupt:
+                print("\nExit requested...")
+                break
+
+    if args.csv:
+        acct_monitor.trade_store.to_csv()
+
+    if reactor.running:
+        reactor.callFromThread(reactor.stop)
 
 
 def blacklist_from_cli(blacklist):
@@ -118,5 +139,6 @@ def whitelist_from_cli(whitelist):
 
 
 if __name__ == "__main__":
-    ENABLE_LOGGING = True
+
     main()
+    print("Main Done")

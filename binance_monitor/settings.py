@@ -73,8 +73,8 @@ def write_symbols(active_symbols: List, inactive_symbols: List) -> None:
     _save_prefs(prefs)
 
 
-def read_symbols(which_symbols="all"):
-    if which_symbols.upper() not in ["active", "inactive", "all"]:
+def read_symbols(which_symbols="ALL"):
+    if which_symbols.upper() not in ["ACTIVE", "INACTIVE", "ALL"]:
         raise ValueError("Must specify which symbols to read (active, inactive, all)")
     key = f"{which_symbols}_symbols"
     return _load_prefs()[key]
@@ -90,19 +90,26 @@ class Blacklist:
         prefs = _load_prefs()
         prefs.update({"blacklist": new_blacklist})
         _save_prefs(prefs)
+        log.info(f"Set new blacklist: {new_blacklist}")
 
     @staticmethod
     def remove(to_remove):
+        if not isinstance(to_remove, list):
+            to_remove = [to_remove]
         to_remove = set(to_remove)
         current = set(Blacklist.get())
 
         if to_remove and current:
             Blacklist.set(list(current - to_remove))
+            log.info(f"Removed from blacklist: {to_remove}")
 
     @staticmethod
     def add(to_add):
+        if not isinstance(to_add, list):
+            to_add = [to_add]
         new_blacklist = list(set(Blacklist.get() + to_add))
         Blacklist.set(new_blacklist)
+        log.info(f"Added to blacklist: {to_add}")
 
 
 def _load_credentials() -> Tuple[str, str]:
