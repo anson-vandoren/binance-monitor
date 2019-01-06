@@ -17,13 +17,14 @@
 # FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
 # OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
-
+import json
 import os
-from typing import List
+from typing import Any, Dict, List, Tuple
 
 import toml
 from logbook import Logger
 
+from binance_monitor import util
 from binance_monitor.util import is_yes_response
 
 USER_FOLDER = os.path.join(os.path.expanduser("~"), ".binance-monitor")
@@ -35,14 +36,14 @@ PREFERENCES = os.path.join(USER_FOLDER, "preferences.toml")
 log = Logger(__name__.split(".", 1)[-1])
 
 
-def _load_prefs() -> dict:
+def _load_prefs() -> Dict[str, Any]:
     """Load user preferences from TOML and return as a dict
 
     :return: dict containing user preferences
     """
 
     try:
-        return toml.load(PREFERENCES)
+        return dict(toml.load(PREFERENCES))
     except (IOError, toml.TomlDecodeError):
         log.info(f"{PREFERENCES} could not be opened or decoded for preferences")
         return {"title": "binance-monitor preferences"}
@@ -88,9 +89,70 @@ def remove_from_blacklist(symbols: List) -> None:
     if not isinstance(symbols, list):
         symbols = [symbols]
 
-    symbols = set(symbols)
     current_blacklist = set(get_blacklist())
 
     if symbols and current_blacklist:
-        new_blacklist = list(current_blacklist - symbols)
+        new_blacklist = list(current_blacklist - set(symbols))
         save_blacklist(new_blacklist)
+
+
+def _load_credentials() -> Tuple[str, str]:
+    """Try to load API credentials from disk.
+
+    :return: Tuple (key, secret) if loaded successfully, else None
+    :raises: IOError if credentials cannot be loaded from disk
+    """
+
+    cache_file = API_KEY_FILENAME
+
+    if not os.path.exists(cache_file):
+        raise IOError(f"Could not load credentials from {cache_file}")
+
+    with open(cache_file, "r") as cred_file:
+        api_credentials = json.load(cred_file)
+        log.info("API credentials loaded from disk")
+
+    api_key = api_credentials.get("binance_key", None)
+    api_secret = api_credentials.get("binance_secret", None)
+
+    if not api_key or not api_secret:
+        log.info("API credentials did not load properly from JSON file")
+        raise IOError(f"{cache_file} did not contain valid credentials")
+
+    return api_key, api_secret
+
+
+def get_credentials() -> Tuple[str, str]:
+    """Get Binance API key, secret
+
+    Try to load from cache first. If not found, prompt user
+
+    :return: A tuple with (API key, API secret)
+    """
+    try:
+        return _load_credentials()
+    except IOError:
+        return _request_credentials()
+
+
+def _request_credentials() -> Tuple[str, str]:
+    """Prompt user to enter API key and secret. Prompt user to save credentials
+    to disk for future use (unencrypted)
+
+    :return: A tuple with (key, secret)
+    """
+
+    api_key = input("Enter Binance API key: ")
+    api_secret = input("Enter Binance API secret: ")
+
+    save_credentials = is_yes_response("\nSave credentials to disk (unencrypted)?")
+
+    if save_credentials:
+        cache_file = API_KEY_FILENAME
+        cred_json = {"binance_key": api_key, "binance_secret": api_secret}
+
+        with open(util.ensure_dir(cache_file), "w") as cred_file:
+            json.dump(cred_json, cred_file)
+            log.info(f"Stored credentials to {cache_file}")
+
+    return api_key, api_secret

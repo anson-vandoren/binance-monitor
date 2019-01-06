@@ -19,7 +19,7 @@
 # DEALINGS IN THE SOFTWARE.
 
 import os
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 
 import pandas as pd
 from binance.client import Client
@@ -27,7 +27,6 @@ from logbook import Logger
 
 from binance_monitor import util
 from binance_monitor.settings import ACCOUNT_STORE_FOLDER
-
 
 class TradeStore:
     TRADE_COLS = [
@@ -49,27 +48,32 @@ class TradeStore:
         self.name = acct_name
         self.file_path = os.path.join(ACCOUNT_STORE_FOLDER, self.name) + ".h5"
 
+        self.trades: Optional[pd.DataFrame] = None
         try:
             util.ensure_dir(self.file_path)
             self.trades: pd.DataFrame = pd.read_hdf(self.file_path, key="trades")
         except (KeyError, IOError) as e:
             self.log.warn(f"Could not read {self.file_path} because {e}")
-            self.trades = None
 
     def save(self):
         with pd.HDFStore(self.file_path, mode="a") as store:
             store.put("trades", self.trades, format="table", append=False)
 
     def last_known_trade_timestamp(self) -> Optional[int]:
+        if self.trades is None:
+            return None
+
         if self.trades.empty:
             return None
 
         return self.trades["time"].max()
 
-    def update(self, trades: [List[Dict]]) -> None:
-        new_trades = pd.DataFrame(trades, columns=self.TRADE_COLS)
+    def update(self, trade_list: List[Dict[str, Any]]) -> None:
+        new_trades = pd.DataFrame(trade_list, columns=self.TRADE_COLS)
+
         for col in ["id", "orderId", "price", "qty", "commission", "time"]:
             new_trades[col] = pd.to_numeric(new_trades[col])
+
         if self.trades is not None:
             self.trades = self.trades.append(
                 new_trades, ignore_index=True, verify_integrity=True, sort=True

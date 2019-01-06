@@ -59,12 +59,12 @@ def main():
     else:
         blacklist = None
 
-    blacklist = blacklist_from_cli(acct_monitor, blacklist, log)
+    # blacklist = blacklist_from_cli(acct_monitor, blacklist, log)
 
     if args.acct_info:
         print("Requested account info")
 
-        acct_monitor.get_all_trades(blacklist=blacklist)
+        acct_monitor.start_user_monitor()
 
 
 def blacklist_from_cli(acct_monitor, blacklist, log):

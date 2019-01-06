@@ -26,7 +26,7 @@ from logbook import Logger
 
 
 class Exchange:
-    def __init__(self, client: Client = None):
+    def __init__(self, client: Client):
         self.log = Logger(__name__.split(".", 1)[-1])
 
         exchange_info = client.get_exchange_info()
