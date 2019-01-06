@@ -24,6 +24,10 @@ import pandas as pd
 from binance.client import Client
 from logbook import Logger
 
+from binance_monitor import settings
+
+pd.set_option("precision", 9)
+
 
 class Exchange:
     def __init__(self, client: Client):
@@ -34,12 +38,13 @@ class Exchange:
         self.rate_limits = exchange_info.get("rateLimits", None)
         self.filters = exchange_info.get("exchangeFilters", None)
         self.symbols = exchange_info.get("symbols", None)
-        self.active_symbols = [
+        active_symbols = [
             symbol["symbol"] for symbol in self.symbols if symbol["status"] == "TRADING"
         ]
-        self.inactive_symbols = [
+        inactive_symbols = [
             symbol["symbol"] for symbol in self.symbols if symbol["status"] != "TRADING"
         ]
+        settings.write_symbols(active_symbols, inactive_symbols)
 
     def max_request_freq(self, req_weight: int = 1) -> float:
         """Get smallest allowable frequency for API calls.

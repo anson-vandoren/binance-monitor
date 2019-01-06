@@ -28,7 +28,7 @@ from logbook import Logger
 from tqdm import tqdm
 
 from binance_monitor import exchange, settings, store
-from binance_monitor.base import Symbol, Asset
+from binance_monitor.base import Asset
 from binance_monitor.trade import TaxTrade
 
 
@@ -51,7 +51,7 @@ class AccountMonitor(object):
         self.client = Client(*credentials)
         self.exchange_info = exchange.Exchange(self.client)
         self.name = name
-        self.trades = store.TradeStore(name)
+        self.trade_store = store.TradeStore(name)
         self.bsm = None
         self.conn_key = None
 
@@ -64,7 +64,9 @@ class AccountMonitor(object):
 
         update = EventUpdate.create(msg)
         if isinstance(update, OrderUpdate) and update.is_trade_event:
+            self.trade_store.add_trade(update.trade)
             print(update.trade)
+            settings.remove_from_blacklist(update.symbol)
 
     def get_trade_history_for(self, symbols: List) -> None:
         """Get full trade history from the API for each symbol in `symbols`
@@ -114,11 +116,12 @@ class AccountMonitor(object):
         # Check if blacklist might need to be updated
         symbols_found = list(set([trade["symbol"] for trade in trades]))
         if symbols_found:
-            settings.try_update_blacklist(symbols_found)
+            settings.Blacklist.remove(symbols_found)
 
         # Write results to the store
-        self.trades.update(trades)
-        self.trades.save()
+        tax_trades = [TaxTrade.from_historic_trades(result) for result in trades]
+        self.trade_store.update(tax_trades)
+        self.trade_store.save()
         self.log.notice(f"{len(trades)} trades retrieved and stored on disk")
 
     def get_all_trades(self, whitelist: List[str] = None, blacklist: List[str] = None):
@@ -127,12 +130,7 @@ class AccountMonitor(object):
         If `whitelist` is given, only get trade history for the list of symbols it contains
         If `blacklist` is given (and no whitelist), get all symbol pairs active on
         Binance *except* the symbols it contains
-
-        :param whitelist:
-        :param blacklist:
-        :return: None
         """
-
         all_active = self.exchange_info.active_symbols
 
         if blacklist is not None and whitelist is None:
@@ -180,11 +178,13 @@ class OrderUpdate(EventUpdate):
         print(
             f"OrderUpdate: executionType={api_payload['x']}\texecutionStatus={api_payload['X']}"
         )
-        self.trade: Optional[TaxTrade]
-        if self.is_trade_event:
-            self.trade = TaxTrade.from_order_update(api_payload)
-        else:
-            self.trade = None
+
+    @property
+    def trade(self) -> TaxTrade:
+        if not self.is_trade_event:
+            raise AttributeError("This order update is not a trade event")
+
+        return TaxTrade.from_order_update(self.payload)
 
     @property
     def is_trade_event(self) -> bool:
@@ -195,47 +195,3 @@ class OrderUpdate(EventUpdate):
         did_execute = float(self.payload["l"]) > 0 and float(self.payload["L"]) > 0
         has_trade_id = self.payload["t"] != -1
         return is_trade and did_execute and has_trade_id
-
-
-# class Trade:
-#     def __init__(self, order_payload):
-#         self.kind = f"{order_payload['o']} {order_payload['S']}"  # e.g. `LIMIT BUY`
-#         self.is_buy = order_payload["S"] == "BUY"
-#         self.timestamp = order_payload["T"]  # transaction time
-#
-#         symbol = Symbol(order_payload["s"])
-#         base_qty = float(order_payload["l"])
-#         quote_qty = float(order_payload["Y"])
-#
-#         self.buy_currency = symbol.base if self.is_buy else symbol.quote
-#         self.buy_amount = base_qty if self.is_buy else quote_qty
-#
-#         self.sell_currency = symbol.quote if self.is_buy else symbol.base
-#         self.sell_amount = quote_qty if self.is_buy else base_qty
-#
-#         self.fee_currency = order_payload["N"]
-#         self.fee_amount = float(order_payload["n"])
-#         self.exchange = "Binance"
-#         self.mark = order_payload["t"]
-#         self.comment = None
-#
-#     def __str__(self):
-#         msg = f"  kind: {self.kind}\n"
-#         if self.is_buy:
-#             msg += (
-#                 f"Bought: {self.buy_amount:.8f} {self.buy_currency}\n"
-#                 f"   for: {self.sell_amount:.8f} {self.sell_currency}\n"
-#             )
-#         else:
-#             msg += (
-#                 f"  Sold: {self.sell_amount:.8f} {self.sell_currency}\n"
-#                 f"   for: {self.buy_amount:.8f} {self.buy_currency}"
-#             )
-#
-#         msg += (
-#             f"   fee: {self.fee_amount:.8f} {self.fee_currency}\n"
-#             f"on {self.exchange} with ID={self.mark}\n"
-#         )
-#         return msg
-
-

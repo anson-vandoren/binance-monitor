@@ -8,7 +8,7 @@ class Symbol:
                 self.base = symbol[:quote_start]
                 self.quote = symbol[quote_start:]
                 return
-        raise KeyError(f"Couldn't find a quote asset for '{symbol}'")
+        raise KeyError(f"Could not find a quote asset for '{symbol}'")
 
 
 class Asset:

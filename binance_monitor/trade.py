@@ -7,6 +7,8 @@ from binance_monitor.base import Symbol
 
 import pandas as pd
 
+pd.set_option("precision", 9)
+
 
 class TaxTrade:
     """Information about a trade required for tax purposes
@@ -19,11 +21,11 @@ class TaxTrade:
         kind: str,
         dtime: Union[str, pd.Timestamp],
         buy_currency: str,
-        buy_amount: Union[str, float, Decimal],
+        buy_amount: Union[str, Decimal],
         sell_currency: str,
-        sell_amount: Union[str, float, Decimal],
+        sell_amount: Union[str, Decimal],
         fee_currency: str,
-        fee_amount: Union[str, float, Decimal],
+        fee_amount: Union[str, Decimal],
         exchange: str = "",
         mark: str = "",
         comment: str = "",
@@ -106,6 +108,20 @@ class TaxTrade:
         # Internally, save as UTC
         self.dtime = self.dtime.tz_convert("UTC")
 
+    COL_NAMES = [
+        "kind",
+        "dtime",
+        "buy_currency",
+        "buy_amount",
+        "sell_currency",
+        "sell_amount",
+        "fee_currency",
+        "fee_amount",
+        "exchange",
+        "mark",
+        "comment",
+    ]
+
     @property
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -123,7 +139,10 @@ class TaxTrade:
         }
 
     def to_dataframe(self):
-        return pd.DataFrame(self.as_dict)
+        df = pd.DataFrame(self.as_dict, index=[0], columns=self.COL_NAMES)
+        for col in ["buy_amount", "sell_amount", "fee_amount"]:
+            df[col] = pd.to_numeric(df[col])
+        return df
 
     def to_csv_line(self, delimiter=", ", end="\n") -> str:
         strings = []
@@ -134,6 +153,7 @@ class TaxTrade:
                 strings.append(str(val))
         return delimiter.join(strings) + end
 
+    @property
     def csv_header(self) -> List[str]:
         return list(self.as_dict.keys())
 
@@ -217,8 +237,9 @@ class TaxTrade:
         return TaxTrade(**kwargs)
 
     def __str__(self):
-        is_buy = 'BUY' in self.kind.upper()
-        msg = f"  kind: {self.kind}\n"
+        is_buy = "BUY" in self.kind.upper()
+        msg = f"{self.dtime}\n"
+        msg += f"  kind: {self.kind}\n"
         if is_buy:
             msg += (
                 f"Bought: {self.buyval:.8f} {self.buycur}\n"

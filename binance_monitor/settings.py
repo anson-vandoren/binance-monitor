@@ -61,39 +61,48 @@ def _save_prefs(prefs: dict) -> None:
         toml.dump(prefs, toml_file)
 
 
-def get_blacklist():
-    return _load_prefs().get("blacklist", None)
-
-
-def save_blacklist(new_blacklist: List):
+def write_symbols(active_symbols: List, inactive_symbols: List) -> None:
     prefs = _load_prefs()
-    prefs.update({"blacklist": new_blacklist})
+    prefs.update(
+        {
+            "active_symbols": active_symbols,
+            "inactive_symbols": inactive_symbols,
+            "all_symbols": active_symbols + inactive_symbols,
+        }
+    )
     _save_prefs(prefs)
 
 
-def try_update_blacklist(found_symbols: List):
-    saved_blacklist = get_blacklist()
-    if not saved_blacklist:
-        return
-
-    unblacklist = [symbol for symbol in found_symbols if symbol in saved_blacklist]
-
-    if not unblacklist:
-        return
-
-    if is_yes_response(f"Unblacklist these symbols: {unblacklist}?"):
-        remove_from_blacklist(unblacklist)
+def read_symbols(which_symbols="all"):
+    if which_symbols.upper() not in ["active", "inactive", "all"]:
+        raise ValueError("Must specify which symbols to read (active, inactive, all)")
+    key = f"{which_symbols}_symbols"
+    return _load_prefs()[key]
 
 
-def remove_from_blacklist(symbols: List) -> None:
-    if not isinstance(symbols, list):
-        symbols = [symbols]
+class Blacklist:
+    @staticmethod
+    def get():
+        return _load_prefs().get("blacklist", None)
 
-    current_blacklist = set(get_blacklist())
+    @staticmethod
+    def set(new_blacklist):
+        prefs = _load_prefs()
+        prefs.update({"blacklist": new_blacklist})
+        _save_prefs(prefs)
 
-    if symbols and current_blacklist:
-        new_blacklist = list(current_blacklist - set(symbols))
-        save_blacklist(new_blacklist)
+    @staticmethod
+    def remove(to_remove):
+        to_remove = set(to_remove)
+        current = set(Blacklist.get())
+
+        if to_remove and current:
+            Blacklist.set(list(current - to_remove))
+
+    @staticmethod
+    def add(to_add):
+        new_blacklist = list(set(Blacklist.get() + to_add))
+        Blacklist.set(new_blacklist)
 
 
 def _load_credentials() -> Tuple[str, str]:

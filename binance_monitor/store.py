@@ -19,68 +19,104 @@
 # DEALINGS IN THE SOFTWARE.
 
 import os
-from typing import Optional, Dict, List, Any
+from typing import List, Optional
 
 import pandas as pd
-from binance.client import Client
 from logbook import Logger
 
 from binance_monitor import util
 from binance_monitor.settings import ACCOUNT_STORE_FOLDER
+from binance_monitor.trade import TaxTrade
+
+pd.set_option("precision", 9)
+
 
 class TradeStore:
-    TRADE_COLS = [
-        "symbol",
-        "id",
-        "orderId",
-        "price",
-        "qty",
-        "commission",
-        "commissionAsset",
-        "time",
-        "isBuyer",
-        "isMaker",
-        "isBestMatch",
-    ]
+    log = Logger(__name__.split(".", 1)[-1])
 
     def __init__(self, acct_name):
-        self.log = Logger(__name__.split(".", 1)[-1])
-        self.name = acct_name
-        self.file_path = os.path.join(ACCOUNT_STORE_FOLDER, self.name) + ".h5"
+        self.nickname = acct_name
+        self.file_path = os.path.join(ACCOUNT_STORE_FOLDER, self.nickname) + ".h5"
+        util.ensure_dir(self.file_path)
 
-        self.trades: Optional[pd.DataFrame] = None
+        self._trades: Optional[pd.DataFrame]
         try:
-            util.ensure_dir(self.file_path)
-            self.trades: pd.DataFrame = pd.read_hdf(self.file_path, key="trades")
-        except (KeyError, IOError) as e:
-            self.log.warn(f"Could not read {self.file_path} because {e}")
+            self._trades: pd.DataFrame = pd.read_hdf(self.file_path, key="taxtrades")
+        except (KeyError, IOError) as exc:
+            self._trades = None
+            self.log.warn(f"Could not read {self.file_path} because {exc}")
 
-    def save(self):
-        with pd.HDFStore(self.file_path, mode="a") as store:
-            store.put("trades", self.trades, format="table", append=False)
+        self.col_names = TaxTrade.COL_NAMES
 
-    def last_known_trade_timestamp(self) -> Optional[int]:
-        if self.trades is None:
-            return None
+    @property
+    def trades(self) -> pd.DataFrame:
+        self.clean()
+        return self._trades
 
-        if self.trades.empty:
-            return None
+    def save(self) -> None:
+        """Write out trade tax events to HDF file.
 
-        return self.trades["time"].max()
-
-    def update(self, trade_list: List[Dict[str, Any]]) -> None:
-        new_trades = pd.DataFrame(trade_list, columns=self.TRADE_COLS)
-
-        for col in ["id", "orderId", "price", "qty", "commission", "time"]:
-            new_trades[col] = pd.to_numeric(new_trades[col])
+        This will overwrite any trade tax data already in the file, but will leave
+        any other HDFStore keys untouched
+        """
 
         if self.trades is not None:
-            self.trades = self.trades.append(
-                new_trades, ignore_index=True, verify_integrity=True, sort=True
-            )
-        else:
-            self.trades = (
-                new_trades.drop_duplicates("id")
-                .sort_values("time")
+            with pd.HDFStore(self.file_path, mode="a") as store:
+                store.put("taxtrades", self.trades, format="table", append=False)
+
+    def clean(self) -> None:
+        """Remove duplicates from in-memory DataFrame, sort by *dtime*, and
+        reset the index
+        """
+
+        if self._trades is not None and not self._trades.empty:
+            self._trades = (
+                self._trades.drop_duplicates()
+                .sort_values("dtime")
                 .reset_index(drop=True)
             )
+
+    def last_known_trade_timestamp(self) -> Optional[pd.Timestamp]:
+        """Return last known trade from in-memory DataFrame
+
+        :return: pandas.Timestamp of the latest trade recorded if there are any
+            records in the DataFrame, otherwise None
+        """
+
+        if self.trades is not None and not self.trades.empty:
+            return self.trades["dtime"].max()
+
+        return None
+
+    def update(self, trade_list: List[TaxTrade]) -> None:
+        new_trades = [trade.as_dict for trade in trade_list]
+        trade_df = pd.DataFrame(new_trades, columns=self.col_names)
+
+        for col in ["buy_amount", "sell_amount", "fee_amount"]:
+            trade_df[col] = pd.to_numeric(trade_df[col])
+
+        if self.trades is not None:
+            self._trades = self.trades.append(
+                trade_df, ignore_index=True, verify_integrity=True, sort=True
+            )
+        else:
+            self._trades = (
+                trade_df.drop_duplicates().sort_values("dtime").reset_index(drop=True)
+            )
+
+    def to_csv(self):
+        if self.trades is None:
+            return
+        csv_file = os.path.splitext(self.file_path)[0] + ".csv"
+
+        self.trades.to_csv(
+            csv_file, float_format="%.9f", index=False, columns=TaxTrade.COL_NAMES
+        )
+
+    def add_trade(self, new_trade: TaxTrade):
+        new_df = new_trade.to_dataframe()
+        self._trades = self.trades.append(
+            new_df, ignore_index=True, verify_integrity=True, sort=True
+        )
+        self.log.info(f"Added new tax trade to the store: {new_trade.as_dict}")
+        self.save()

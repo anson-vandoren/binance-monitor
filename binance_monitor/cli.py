@@ -43,60 +43,78 @@ def main():
     parser = argparse.ArgumentParser(
         description="CLI for monitoring Binance account information"
     )
-    parser.add_argument("--acct_info", help="Display account info", action="store_true")
     parser.add_argument(
-        "--blacklist",
-        help="Blacklist (don't get trades for) listed symbol pairs",
-        nargs="*",
+        "--update", help="Update trades from server", action="store_true"
+    )
+    parser.add_argument("--listen", help="Listen for new trades", action="store_true")
+    parser.add_argument("--blacklist", help="Add symbol(s) to blacklist", nargs="*")
+    parser.add_argument(
+        "--whitelist", help="Remove symbol(s) from blacklist", nargs="*"
     )
 
     args = parser.parse_args()
 
-    acct_monitor = monitor.AccountMonitor()
+    acct_monitor = None
 
-    if args.blacklist:
-        blacklist = sorted(args.blacklist)
-    else:
-        blacklist = None
+    blacklist = blacklist_from_cli(args.blacklist or None)
+    blacklist = whitelist_from_cli(args.whitelist or None)
 
-    # blacklist = blacklist_from_cli(acct_monitor, blacklist, log)
+    if args.update:
+        if acct_monitor is None:
+            acct_monitor = monitor.AccountMonitor()
+        acct_monitor.get_all_trades(blacklist=blacklist)
+        acct_monitor.trade_store.save()
 
-    if args.acct_info:
-        print("Requested account info")
-
+    if args.listen:
+        if acct_monitor is None:
+            acct_monitor = monitor.AccountMonitor()
         acct_monitor.start_user_monitor()
 
 
-def blacklist_from_cli(acct_monitor, blacklist, log):
-    saved_blacklist = settings.get_blacklist()
+def blacklist_from_cli(blacklist):
+    if not blacklist:
+        return settings.Blacklist.get()
 
-    # Wants to blacklist all?
-    if blacklist is not None:
-        if "ALL" in blacklist or "all" in blacklist:
-            if is_yes_response("Are you sure you want to blacklist all symbols?"):
-                blacklist = (
-                    acct_monitor.exchange_info.active_symbols
-                    + acct_monitor.exchange_info.inactive_symbols
-                )
+    blacklist = [symbol.upper() for symbol in blacklist]
 
-    # Wants to add to blacklist?
-    if blacklist is not None and saved_blacklist != blacklist:
-        if is_yes_response("Add to saved blacklist? "):
-            if saved_blacklist is None:
-                new_blacklist = blacklist
-            else:
-                new_blacklist = list(set(saved_blacklist + blacklist))
-            new_blacklist = sorted(new_blacklist)
-            log.info(f"Old blacklist: {saved_blacklist}")
-            log.info(f"New blacklist: {new_blacklist}")
-            settings.save_blacklist(new_blacklist)
+    if "ALL" in blacklist:
+        if is_yes_response("Are you sure you want to blacklist all symbols?"):
+            blacklist = settings.read_symbols("all")
+            settings.Blacklist.set(blacklist)
+            return blacklist
 
-    # No blacklist, want to use saved blacklist?
-    elif blacklist is None and saved_blacklist:
-        use_saved = is_yes_response("Use saved blacklist?")
-        if use_saved:
-            blacklist = saved_blacklist
-    return blacklist
+    if "NONE" in blacklist:
+        if is_yes_response("Are you sure you want to clear all blacklisted symbols?"):
+            blacklist = []
+            settings.Blacklist.set(blacklist)
+            return blacklist
+
+    settings.Blacklist.add(blacklist)
+
+    return settings.Blacklist.get()
+
+
+def whitelist_from_cli(whitelist):
+    if not whitelist:
+        return settings.Blacklist.get()
+
+    whitelist = [symbol.upper() for symbol in whitelist]
+
+    if "ALL" in whitelist:
+        if is_yes_response("Are you sure you want to whitelist all symbols?"):
+            blacklist = []
+            settings.Blacklist.set(blacklist)
+            return blacklist
+
+    if "NONE" in whitelist:
+        if is_yes_response("Are you sure you want to remove all whitelisted symbols?"):
+            blacklist = settings.read_symbols("all")
+            settings.Blacklist.set(blacklist)
+            return blacklist
+
+    settings.Blacklist.remove(whitelist)
+
+    return settings.Blacklist.get()
 
 
 if __name__ == "__main__":
